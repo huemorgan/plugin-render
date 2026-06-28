@@ -1,6 +1,6 @@
 [project]
 name = "plugin-render"
-version = "0.1.0"
+version = "0.2.0"
 description = "Render.com service management for Luna. Built on luna_sdk v0."
 readme = "README.md"
 license = { text = "MIT" }

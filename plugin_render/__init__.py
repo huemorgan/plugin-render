@@ -7,9 +7,11 @@ environment variables, and live logs. Requires an API key stored in vault.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from luna_sdk import (
+    CredentialSlot,
     LunaPlugin,
     PluginContext,
     PluginManifest,
@@ -24,12 +26,14 @@ from .state import get_client, set_client
 log = logging.getLogger("plugin-render")
 
 VAULT_KEY = "plugin_render.api_key"
+ENV_KEY = "LUNA_RENDER_API_KEY"
+ENV_BASE_URL = "LUNA_RENDER_BASE_URL"
 
 
 class RenderPlugin(LunaPlugin):
     manifest = PluginManifest(
         name="plugin-render",
-        version="0.1.0",
+        version="0.2.0",
         description="Render.com service management — deploys, env vars, logs, and lifecycle control.",
         category="connectors",
         depends_on=["plugin-vault"],
@@ -46,27 +50,62 @@ class RenderPlugin(LunaPlugin):
         interfaces={"webui": "interface/webui"},
     )
 
+    def credential_slots(self) -> list[CredentialSlot]:
+        # env_base_url_var marks render proxy-provisionable: the gateway sets
+        # LUNA_RENDER_BASE_URL (={gateway}/proxy/render) + LUNA_RENDER_API_KEY
+        # (token), so the real Render key never lands on the tenant machine.
+        return [
+            CredentialSlot(
+                slug="render",
+                credential_name=VAULT_KEY,
+                env_key_var=ENV_KEY,
+                env_base_url_var=ENV_BASE_URL,
+                owner=self.manifest.name,
+            )
+        ]
+
     async def on_load(self, ctx: PluginContext) -> None:
         set_client(None)
-        vault = ctx.vault
-        if vault is None:
-            log.warning("Vault provider not available; plugin-render inactive")
-            return
 
-        api_key: str | None = None
-        try:
-            cred = await vault.get_credential(VAULT_KEY)
-            api_key = cred.value
-        except KeyError:
-            pass
+        # Key: vault first, then env (the env value is the gateway token in proxy
+        # mode). Base-url: env only — when set, route through the gateway proxy.
+        api_key = await self._resolve_key(ctx)
+        base_url = self._resolve_base_url(ctx)
 
         if api_key:
-            set_client(RenderClient(api_key))
+            set_client(RenderClient(api_key, base_url=base_url))
 
         self._register_tools(ctx)
         self._register_skills(ctx)
 
-        log.info("plugin-render loaded (tools=12, connected=%s)", get_client() is not None)
+        log.info(
+            "plugin-render loaded (tools=12, connected=%s, gateway=%s)",
+            get_client() is not None, bool(base_url),
+        )
+
+    async def _resolve_key(self, ctx: PluginContext) -> str | None:
+        vault = getattr(ctx, "vault", None)
+        if vault is not None:
+            try:
+                cred = await vault.get_credential(VAULT_KEY)
+                if (cred.value or "").strip():
+                    return cred.value.strip()
+            except KeyError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning("plugin-render: vault read failed: %s", exc)
+        if getattr(ctx, "get_env", None) is not None:
+            val = (ctx.get_env(ENV_KEY) or "").strip()
+            if val:
+                return val
+        return (os.environ.get("RENDER_API_KEY") or "").strip() or None
+
+    def _resolve_base_url(self, ctx: PluginContext) -> str | None:
+        if getattr(ctx, "get_env", None) is not None:
+            val = (ctx.get_env(ENV_BASE_URL) or "").strip()
+            if val:
+                return val
+        return (os.environ.get("RENDER_BASE_URL") or "").strip() or None
 
     async def on_unload(self) -> None:
         client = get_client()

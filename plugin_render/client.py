@@ -10,9 +10,12 @@ API_BASE = "https://api.render.com/v1"
 
 
 class RenderClient:
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, base_url: str | None = None) -> None:
+        # `base_url` overrides the upstream — set to `{gateway}/proxy/render` for
+        # cloud key-provisioning (the api_key is then the opaque gateway token).
+        # Unset → the real Render API + real key (BYO / local dev).
         self._http = httpx.AsyncClient(
-            base_url=API_BASE,
+            base_url=(base_url or API_BASE).rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
         )
