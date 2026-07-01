@@ -33,7 +33,9 @@ ENV_BASE_URL = "LUNA_RENDER_BASE_URL"
 class RenderPlugin(LunaPlugin):
     manifest = PluginManifest(
         name="plugin-render",
-        version="0.2.0",
+        icon="server",
+        image="assets/icon.png",
+        version="0.2.1",
         description="Render.com service management — deploys, env vars, logs, and lifecycle control.",
         category="connectors",
         depends_on=["plugin-vault"],
