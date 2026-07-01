@@ -1,5 +1,6 @@
 name = "plugin-render"
-version = "0.2.1"
+shown_name = "Render"
+version = "0.2.2"
 description = "Render.com service management — deploys, env vars, logs, and lifecycle control."
 entry = "plugin_render"
 sdk_version = "0"
