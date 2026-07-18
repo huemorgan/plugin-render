@@ -36,7 +36,7 @@ class RenderPlugin(LunaPlugin):
         shown_name="Render",
         icon="server",
         image="assets/icon.png",
-        version="0.2.2",
+        version="0.2.3",
         description="Render.com service management — deploys, env vars, logs, and lifecycle control.",
         category="connectors",
         depends_on=["plugin-vault"],
@@ -69,6 +69,10 @@ class RenderPlugin(LunaPlugin):
 
     async def on_load(self, ctx: PluginContext) -> None:
         set_client(None)
+        # 040: keep ctx so a key vaulted AFTER load can be resolved lazily on
+        # first tool use — the owner filling the Settings/secure form must not
+        # require a plugin reload to activate the tools.
+        self._ctx = ctx
 
         # Key: vault first, then env (the env value is the gateway token in proxy
         # mode). Base-url: env only — when set, route through the gateway proxy.
@@ -116,8 +120,17 @@ class RenderPlugin(LunaPlugin):
             await client.close()
             set_client(None)
 
-    def _get_client(self) -> RenderClient:
+    async def _client(self) -> RenderClient:
+        # 040: lazy activation. If the client wasn't built at load (no key yet),
+        # try once more now — the owner may have vaulted the key since. Only then
+        # give up. This is what stops the "not configured" loop after a late save.
         client = get_client()
+        if client is None:
+            ctx = getattr(self, "_ctx", None)
+            api_key = await self._resolve_key(ctx) if ctx is not None else None
+            if api_key:
+                client = RenderClient(api_key, base_url=self._resolve_base_url(ctx))
+                set_client(client)
         if client is None:
             raise RuntimeError("Render API key not configured. Add it in Settings > Render.")
         return client
@@ -133,7 +146,7 @@ class RenderPlugin(LunaPlugin):
         # --- services ---
 
         async def _list_services() -> dict[str, Any]:
-            return {"services": await self._get_client().list_services()}
+            return {"services": await (await self._client()).list_services()}
 
         _reg(
             ToolDef(
@@ -145,7 +158,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _get_service(service_id: str) -> dict[str, Any]:
-            return await self._get_client().get_service(service_id)
+            return await (await self._client()).get_service(service_id)
 
         _reg(
             ToolDef(
@@ -163,7 +176,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _restart_service(service_id: str) -> dict[str, Any]:
-            return await self._get_client().restart_service(service_id)
+            return await (await self._client()).restart_service(service_id)
 
         _reg(
             ToolDef(
@@ -182,7 +195,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _suspend_service(service_id: str) -> dict[str, Any]:
-            return await self._get_client().suspend_service(service_id)
+            return await (await self._client()).suspend_service(service_id)
 
         _reg(
             ToolDef(
@@ -201,7 +214,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _resume_service(service_id: str) -> dict[str, Any]:
-            return await self._get_client().resume_service(service_id)
+            return await (await self._client()).resume_service(service_id)
 
         _reg(
             ToolDef(
@@ -219,7 +232,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _get_live_logs(service_id: str) -> dict[str, Any]:
-            return {"logs": await self._get_client().get_live_logs(service_id)}
+            return {"logs": await (await self._client()).get_live_logs(service_id)}
 
         _reg(
             ToolDef(
@@ -241,7 +254,7 @@ class RenderPlugin(LunaPlugin):
         async def _trigger_deploy(
             service_id: str, clear_cache: bool = False,
         ) -> dict[str, Any]:
-            return await self._get_client().trigger_deploy(
+            return await (await self._client()).trigger_deploy(
                 service_id, clear_cache=clear_cache,
             )
 
@@ -263,7 +276,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _list_deploys(service_id: str) -> dict[str, Any]:
-            return {"deploys": await self._get_client().list_deploys(service_id)}
+            return {"deploys": await (await self._client()).list_deploys(service_id)}
 
         _reg(
             ToolDef(
@@ -281,7 +294,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _get_deploy(service_id: str, deploy_id: str) -> dict[str, Any]:
-            return await self._get_client().get_deploy(service_id, deploy_id)
+            return await (await self._client()).get_deploy(service_id, deploy_id)
 
         _reg(
             ToolDef(
@@ -302,7 +315,7 @@ class RenderPlugin(LunaPlugin):
         # --- env vars ---
 
         async def _list_env_vars(service_id: str) -> dict[str, Any]:
-            return {"env_vars": await self._get_client().list_env_vars(service_id)}
+            return {"env_vars": await (await self._client()).list_env_vars(service_id)}
 
         _reg(
             ToolDef(
@@ -322,7 +335,7 @@ class RenderPlugin(LunaPlugin):
         async def _set_env_var(
             service_id: str, key: str, value: str,
         ) -> dict[str, Any]:
-            return await self._get_client().set_env_var(service_id, key, value)
+            return await (await self._client()).set_env_var(service_id, key, value)
 
         _reg(
             ToolDef(
@@ -344,7 +357,7 @@ class RenderPlugin(LunaPlugin):
         )
 
         async def _delete_env_var(service_id: str, key: str) -> dict[str, Any]:
-            await self._get_client().delete_env_var(service_id, key)
+            await (await self._client()).delete_env_var(service_id, key)
             return {"deleted": True, "key": key}
 
         _reg(
